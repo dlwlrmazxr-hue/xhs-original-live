@@ -4,7 +4,7 @@ import ImageIO
 import AVFoundation
 
 enum PhotoStore {
-    private final class Once {
+    private final class Once: @unchecked Sendable {
         private let lock = NSLock()
         private var finished = false
         func take() -> Bool { lock.lock(); defer { lock.unlock() }; if finished { return false }; finished = true; return true }
