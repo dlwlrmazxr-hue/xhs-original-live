@@ -1,0 +1,43 @@
+name: Build and test iPhone app
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install project generator
+        run: command -v xcodegen >/dev/null || brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Choose an installed iPhone simulator
+        run: |
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for runtime,items in d["devices"].items() if "iOS" in runtime for x in items if "iPhone" in x["name"]))')
+          echo "SIMULATOR_ID=$SIMULATOR_ID" >> "$GITHUB_ENV"
+      - name: Compile and run native tests
+        run: |
+          xcodebuild test -project XHSOriginalLive.xcodeproj -scheme XHSOriginalLive -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/simulator -resultBundlePath build/TestResults.xcresult CODE_SIGNING_ALLOWED=NO
+      - name: Build unsigned physical-device app
+        run: |
+          xcodebuild build -project XHSOriginalLive.xcodeproj -scheme XHSOriginalLive -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/device CODE_SIGNING_ALLOWED=NO
+          mkdir -p build/package/Payload
+          cp -R build/device/Build/Products/Release-iphoneos/XHSOriginalLive.app build/package/Payload/
+          cd build/package
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent Payload ../XHSOriginalLive-unsigned.ipa
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: XHSOriginalLive-unsigned-IPA
+          path: build/XHSOriginalLive-unsigned.ipa
+          retention-days: 7
+      - name: Upload native test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-test-results
+          path: build/TestResults.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
