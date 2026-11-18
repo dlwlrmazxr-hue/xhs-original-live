@@ -94,11 +94,15 @@ final class CoreTests: XCTestCase {
         actualReader.add(output); XCTAssertTrue(actualReader.startReading())
         var samples: [Data] = []
         while let sample = output.copyNextSampleBuffer() {
-            let block = try XCTUnwrap(CMSampleBufferGetDataBuffer(sample))
+            // AVAssetReader can emit zero-byte timing/end markers. They are not
+            // compressed video payloads; still reject a missing nonempty buffer.
+            if CMSampleBufferGetTotalSampleSize(sample) == 0 { continue }
+            let block = try XCTUnwrap(CMSampleBufferGetDataBuffer(sample), "Missing compressed payload in \(url.lastPathComponent)")
             var bytes = Data(count: CMBlockBufferGetDataLength(block))
             let status = bytes.withUnsafeMutableBytes { CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: $0.count, destination: $0.baseAddress!) }
             XCTAssertEqual(status, noErr); samples.append(bytes)
         }
+        XCTAssertEqual(actualReader.status, .completed, actualReader.error?.localizedDescription ?? "")
         return samples
     }
 
@@ -110,7 +114,7 @@ final class CoreTests: XCTestCase {
         let image = try OriginalImage.prepare(source: source, output: dir.appendingPathComponent("paired.jpg"))
         try await MoviePairer.pair(source: input, output: movie, identifier: image.identifier)
         let before = try await compressedSamples(at: input), after = try await compressedSamples(at: movie)
-        XCTAssertFalse(before.isEmpty); XCTAssertEqual(before, after)
+        XCTAssertEqual(before.count, 36); XCTAssertEqual(before, after)
         try await PhotoStore.validateLive(image: image.url, video: movie)
         // No CI test writes to a person's real photo library.
     }
