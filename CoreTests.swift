@@ -224,3 +224,14 @@ extension CoreTests {
         XCTAssertFalse(note.items[1].isLive)
     }
 }
+
+
+extension CoreTests {
+    func testWeiboKeepsOfficialLivePlaybackURL() throws {
+        let payload = #"{"idstr":"12345","pics":[{"type":"livephoto","large":{"url":"https://wx1.sinaimg.cn/large/picture.jpg"},"videoSrc":"https://video.weibo.com/media/play?livephoto=https%3A%2F%2Flivephoto.us.sinaimg.cn%2Fclip.mov"}]}"#
+        let note = try SocialResolver.parse(html: payload, platform: .weibo, target: "12345")
+        XCTAssertEqual(note.items.first?.video?.host, "video.weibo.com")
+        XCTAssertEqual(note.items.first?.video?.path, "/media/play")
+        XCTAssertEqual(note.items.first?.isLive, true)
+    }
+}

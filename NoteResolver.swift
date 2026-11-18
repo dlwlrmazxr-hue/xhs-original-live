@@ -284,10 +284,9 @@ enum SocialResolver {
                 let largest = d["largest"] as? [String: Any] ?? d["original"] as? [String: Any] ?? d["large"] as? [String: Any]
                 // Never upgrade a thumbnail URL by guessing a different path.
                 let still = largest.flatMap { url($0["url"]) }
-                var motion = url(d["video"] ?? d["videoSrc"])
-                if let raw = motion, let underlying = URLComponents(url: raw, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "livephoto" })?.value {
-                    motion = url(underlying)
-                }
+                // Keep the official player URL intact. Its nested URL is not
+                // necessarily authorized as a standalone download.
+                let motion = url(d["video"]) ?? url(d["videoSrc"])
                 let live = (d["type"] as? String)?.lowercased() == "livephoto"
                 append(image: still, video: live ? motion : nil, live: live)
             }
