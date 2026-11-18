@@ -119,3 +119,52 @@ final class CoreTests: XCTestCase {
         // No CI test writes to a person's real photo library.
     }
 }
+
+extension CoreTests {
+    func testNewPlatformLinksAndHostBoundaries() throws {
+        for text in ["https://v.douyin.com/fixture/", "https://weibo.com/1/fixture", "https://www.instagram.com/p/Fixture/"] {
+            XCTAssertNotNil(MediaPlatform.identify(try NetworkPolicy.shareLink(in: text)))
+        }
+        for raw in ["https://instagram.com.evil.test/p/x", "https://douyin.com@evil.test/video/1", "https://evil.test/file.mp4", "http://weibo.com/1/2"] {
+            XCTAssertFalse(NetworkPolicy.allows(URL(string: raw)!, media: true))
+        }
+        XCTAssertFalse(NetworkPolicy.allows(URL(string: "https://cdninstagram.com/file.jpg")!))
+        XCTAssertTrue(NetworkPolicy.allows(URL(string: "https://scontent.fixture.cdninstagram.com/file.jpg")!, media: true))
+    }
+
+    func testDouyinLiveImagesAndWrongPostRejection() throws {
+        let data = #"{"loaderData":{"note_(id)/page":{"aweme_detail":{"aweme_id":"123456","images":[{"url_list":["https://p.example.byteimg.com/original.jpg"],"video":{"play_addr":{"url_list":["https://v.example.douyinvod.com/live.mp4"]}}}]}}}}"#
+        let html = "<script>window._ROUTER_DATA = " + data + ";</script>"
+        let note = try SocialResolver.parse(html: html, platform: .douyin, target: "123456")
+        XCTAssertEqual(note.items.count, 1); XCTAssertTrue(note.items[0].isLive)
+        XCTAssertEqual(note.items[0].image?.lastPathComponent, "original.jpg")
+        XCTAssertThrowsError(try SocialResolver.parse(html: html, platform: .douyin, target: "999999"))
+    }
+
+    func testInstagramRouteMetadataIsNotMistakenForPost() throws {
+        let data = #"{"route":{"shortcode":"Fixture"},"post":{"code":"Fixture","carousel_media":[{"media_type":1,"image_versions2":{"candidates":[{"width":100,"height":100,"url":"https://s.cdninstagram.com/low.jpg"},{"width":2000,"height":1500,"url":"https://s.cdninstagram.com/high.jpg"}]}},{"media_type":2,"video_versions":[{"width":1920,"height":1080,"url":"https://s.cdninstagram.com/movie.mp4"}]}]}}"#
+        let note = try SocialResolver.parse(html: data, platform: .instagram, target: "Fixture")
+        XCTAssertEqual(note.items.count, 2)
+        XCTAssertEqual(note.items[0].image?.lastPathComponent, "high.jpg")
+        XCTAssertEqual(note.items[1].video?.lastPathComponent, "movie.mp4")
+        XCTAssertNil(note.items[1].image); XCTAssertFalse(note.items[1].isLive)
+        XCTAssertThrowsError(try SocialResolver.parse(html: data, platform: .instagram, target: "Other"))
+        XCTAssertEqual(SocialResolver.instagramPK("BA"), "64")
+    }
+
+    func testWeiboMixedPostOrderAndQuality() throws {
+        let data = #"{"idstr":"12345","bid":"Example","mix_media_info":{"items":[{"type":"pic","data":{"largest":{"url":"https://wx1.sinaimg.cn/large/original.jpg"}}},{"type":"video","data":{"media_info":{"playback_list":[{"play_info":{"width":640,"height":360,"url":"https://f.video.weibocdn.com/low.mp4"}},{"play_info":{"width":1920,"height":1080,"url":"https://f.video.weibocdn.com/high.mp4"}}]}}}]}}"#
+        let note = try SocialResolver.parse(html: data, platform: .weibo, target: "Example")
+        XCTAssertEqual(note.items.count, 2)
+        XCTAssertEqual(note.items[0].image?.lastPathComponent, "original.jpg")
+        XCTAssertEqual(note.items[1].video?.lastPathComponent, "high.mp4")
+        XCTAssertThrowsError(try SocialResolver.parse(html: data, platform: .weibo, target: "54321"))
+    }
+
+    func testCapturedPayloadsCannotDownloadRecommendedPost() throws {
+        let payload = #"{"aweme_detail":{"aweme_id":"1234","video":{"play_addr":{"url_list":["https://v.douyinvod.com/post.mp4"]}}}}"#
+        XCTAssertThrowsError(try SocialResolver.parse(html: "<html>login</html>", platform: .douyin, target: "9999", payloads: [payload]))
+        let note = try SocialResolver.parse(html: "<html></html>", platform: .douyin, target: "1234", payloads: [payload])
+        XCTAssertEqual(note.items[0].video?.lastPathComponent, "post.mp4")
+    }
+}

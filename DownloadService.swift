@@ -51,7 +51,7 @@ enum DownloadService {
                     report.details.append("第 \(item.id) 项：" + detail)
                 }
                 report.saved += 1
-                if kind != .image && item.webVideo { report.details.append("第 \(item.id) 项动态文件来自平台网页版本，无法保证等同上传原件或完全无水印。") }
+                if kind != .image && item.webVideo { report.details.append("第 \(item.id) 项动态文件来自平台网页版本，将保存平台提供的最高可用版本，无法保证等同上传原件或完全无水印。") }
             } catch is CancellationError { throw CancellationError() }
             catch { report.failed.append("第 \(item.id) 项：\(error.localizedDescription)") }
         }

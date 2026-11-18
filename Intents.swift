@@ -10,7 +10,7 @@ enum ShortcutMediaKind: String, AppEnum {
 }
 
 struct DownloadXHSIntent: AppIntent {
-    static var title: LocalizedStringResource = "下载小红书原图、视频或实况"
+    static var title: LocalizedStringResource = "下载图片、视频或实况"
     static var description = IntentDescription("读取分享文案或剪贴板，并在本地处理后存入照片。")
     static var openAppWhenRun = true
 
@@ -28,6 +28,6 @@ struct DownloadXHSIntent: AppIntent {
 struct OriginalLiveShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: DownloadXHSIntent(), phrases: ["使用\(.applicationName)下载小红书"],
-                    shortTitle: "保存小红书媒体", systemImageName: "livephoto")
+                    shortTitle: "保存分享媒体", systemImageName: "livephoto")
     }
 }

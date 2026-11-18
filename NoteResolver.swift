@@ -3,6 +3,7 @@ import Foundation
 enum NoteResolver {
     static func resolve(_ text: String) async throws -> Note {
         let original = try NetworkPolicy.shareLink(in: text)
+        if MediaPlatform.identify(original) != .xhs { return try await SocialResolver.resolve(original) }
         let (html, final) = try await Network.page(original)
         // A long URL's note ID remains authoritative even after an unexpected redirect.
         let identity = noteID(in: original) == nil ? final : original
@@ -99,5 +100,198 @@ enum NoteResolver {
         }
         guard let entry = entries.first, let raw = entry["masterUrl"] as? String else { return nil }
         return (try NetworkPolicy.secure(raw, media: true), true)
+    }
+}
+
+// Platform parsers only accept media belonging to the requested post identity.
+// No global video/image scraping: recommended posts, avatars and previews are excluded.
+enum SocialResolver {
+    static func id(in url: URL, platform: MediaPlatform) -> String? {
+        let parts = url.pathComponents.filter { $0 != "/" }
+        switch platform {
+        case .douyin:
+            if let i = parts.firstIndex(where: { ["video", "note", "slides"].contains($0) }), i + 1 < parts.count { return parts[i+1] }
+            return URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "modal_id" })?.value
+        case .instagram:
+            if let i = parts.firstIndex(where: { ["p", "reel", "reels", "tv"].contains($0) }), i + 1 < parts.count { return parts[i+1] }
+        case .weibo:
+            if parts.count == 2, ["status", "detail"].contains(parts[0]) || parts[0].allSatisfy(\.isNumber) { return parts[1] }
+        case .xhs: return NoteResolver.noteID(in: url)
+        }
+        return nil
+    }
+
+    static func resolve(_ original: URL) async throws -> Note {
+        guard let platform = MediaPlatform.identify(original), platform != .xhs else { throw LiveError.message("不支持的平台。") }
+        let (html, final) = try await Network.page(original)
+        guard MediaPlatform.identify(final) == platform else { throw LiveError.message("分享链接跳转到了其他平台，已停止。") }
+        let postURL = id(in: original, platform: platform) == nil ? final : original
+        guard let target = id(in: postURL, platform: platform), target.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else {
+            throw LiveError.message("请复制具体帖子的链接，暂不支持主页、直播、Story 或微博 TV 单独视频链接。")
+        }
+        if let note = try? parse(html: html, platform: platform, target: target) { return note }
+        var endpoints: [String] = []
+        switch platform {
+        case .douyin: endpoints = ["https://www.iesdouyin.com/share/note/\(target)/", "https://www.iesdouyin.com/share/video/\(target)/"]
+        case .weibo: endpoints = ["https://weibo.com/ajax/statuses/show?id=\(target)", "https://m.weibo.cn/statuses/show?id=\(target)"]
+        case .instagram: endpoints = ["https://www.instagram.com/p/\(target)/embed/captioned/"]
+        case .xhs: break
+        }
+        for endpoint in endpoints {
+            try Task.checkCancellation()
+            guard let url = URL(string: endpoint) else { continue }
+            if let (body, _) = try? await Network.page(url), let note = try? parse(html: body, platform: platform, target: target) { return note }
+        }
+        throw LiveError.message("\(platform.title)没有返回这篇帖子的可下载资源。请点「网页登录／验证」，在官方页面打开目标帖子后重试；若仍失败，请提供错误截图。不能下载私密、已删除或无权限的内容。")
+    }
+
+    static func captures(_ pattern: String, in text: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators, .caseInsensitive]) else { return [] }
+        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { m in
+            guard m.numberOfRanges > 1, let range = Range(m.range(at: 1), in: text) else { return nil }; return String(text[range])
+        }
+    }
+
+    static func jsonValues(in html: String) -> [Any] {
+        var values: [Any] = []
+        func add(_ string: String) {
+            if let d = string.data(using: .utf8), let v = try? JSONSerialization.jsonObject(with: d, options: [.fragmentsAllowed]) { values.append(v) }
+        }
+        add(html)
+        for script in captures(#"<script\b[^>]*>(.*?)</script\s*>"#, in: html) {
+            add(script)
+            if let decoded = script.removingPercentEncoding, decoded != script { add(decoded) }
+            // Extract a balanced JSON object from the known state assignments.
+            for marker in ["_ROUTER_DATA", "__INITIAL_STATE__", "_sharedData", "__additionalDataLoaded"] {
+                guard let r = script.range(of: marker), let start = script[r.upperBound...].firstIndex(of: "{") else { continue }
+                var depth = 0, quoted = false, escaped = false
+                for i in script[start...].indices {
+                    let c = script[i]
+                    if quoted { if escaped { escaped = false } else if c == "\\" { escaped = true } else if c == "\"" { quoted = false } }
+                    else if c == "\"" { quoted = true }
+                    else if c == "{" { depth += 1 }
+                    else if c == "}" { depth -= 1; if depth == 0 { add(String(script[start...i])); break } }
+                }
+            }
+        }
+        return values
+    }
+
+    static func find(_ value: Any, matching predicate: ([String: Any]) -> Bool, depth: Int = 0) -> [String: Any]? {
+        guard depth < 80 else { return nil }
+        if let d = value as? [String: Any] {
+            if predicate(d) { return d }
+            for key in d.keys.sorted() { if let result = find(d[key]!, matching: predicate, depth: depth + 1) { return result } }
+        } else if let a = value as? [Any] {
+            for child in a { if let result = find(child, matching: predicate, depth: depth + 1) { return result } }
+        }
+        return nil
+    }
+    static func string(_ value: Any?) -> String? {
+        if let s = value as? String { return s }; return (value as? NSNumber)?.stringValue
+    }
+    static func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }
+    static func url(_ value: Any?) -> URL? {
+        guard let s = value as? String, !s.isEmpty else { return nil }
+        return try? NetworkPolicy.secure(s, media: true)
+    }
+    static func address(_ value: Any?) -> URL? {
+        if let direct = url(value) { return direct }
+        if let d = value as? [String: Any] {
+            for key in ["url_list", "urlList"] { if let a = d[key] as? [String], let first = a.compactMap({ url($0) }).first { return first } }
+            return url(d["url"])
+        }
+        return nil
+    }
+    static func best(_ entries: [[String: Any]]) -> [String: Any]? {
+        entries.sorted { a,b in
+            let x = number(a["width"] ?? a["config_width"]) * number(a["height"] ?? a["config_height"]), y = number(b["width"] ?? b["config_width"]) * number(b["height"] ?? b["config_height"])
+            return x == y ? number(a["bit_rate"] ?? a["bitrate"]) > number(b["bit_rate"] ?? b["bitrate"]) : x > y
+        }.first
+    }
+    static func instagramPK(_ code: String) -> String? {
+        let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+        var value: UInt64 = 0
+        for character in code {
+            guard let digit = alphabet.firstIndex(of: character) else { return nil }
+            let (multiplied, overflow) = value.multipliedReportingOverflow(by: 64)
+            let (added, overflow2) = multiplied.addingReportingOverflow(UInt64(digit))
+            guard !overflow, !overflow2 else { return nil }; value = added
+        }
+        return String(value)
+    }
+    static func parse(html: String, platform: MediaPlatform, target: String, payloads: [String] = []) throws -> Note {
+        let values = jsonValues(in: html) + payloads.flatMap { jsonValues(in: $0) }
+        let predicate: ([String: Any]) -> Bool = { d in
+            switch platform {
+            case .douyin: return string(d["aweme_id"] ?? d["awemeId"]) == target
+            case .weibo: return ["idstr", "id", "mid", "bid"].contains { string(d[$0]) == target } && (d["pics"] != nil || d["pic_infos"] != nil || d["page_info"] != nil || d["mix_media_info"] != nil)
+            case .instagram:
+                let identity = string(d["shortcode"] ?? d["code"]) == target || (instagramPK(target) != nil && string(d["pk"] ?? d["id"])?.components(separatedBy: "_").first == instagramPK(target))
+                return identity && ["if_not_gated_logged_out", "carousel_media", "edge_sidecar_to_children", "video_versions", "video_url", "image_versions2", "display_url"].contains { d[$0] != nil }
+            case .xhs: return false
+            }
+        }
+        guard let post = values.compactMap({ find($0, matching: predicate) }).first else { throw LiveError.message("网页数据与目标帖子不一致，未保存推荐内容。") }
+        var items: [MediaItem] = []
+        func append(image: URL? = nil, video: URL? = nil, live: Bool = false) {
+            guard image != nil || video != nil else { return }
+            items.append(MediaItem(id: items.count + 1, image: image, video: video, isLive: live && image != nil && video != nil, webVideo: video != nil))
+        }
+        switch platform {
+        case .douyin:
+            let images = post["images"] as? [[String: Any]] ?? post["imagePostInfo"].flatMap { $0 as? [String: Any] }?["images"] as? [[String: Any]] ?? []
+            for image in images {
+                let picture = address(image["display_image"] ?? image["displayImage"] ?? image)
+                let video = image["video"] as? [String: Any] ?? [:]
+                let motion = address(video["play_addr"] ?? video["playAddr"])
+                append(image: picture, video: motion, live: motion != nil)
+            }
+            if images.isEmpty, let video = post["video"] as? [String: Any] {
+                let variants = video["bit_rate"] as? [[String: Any]] ?? []
+                let ordered = variants.sorted { number($0["bit_rate"]) > number($1["bit_rate"]) }
+                let motion = ordered.compactMap { address($0["play_addr"]) }.first ?? address(video["play_addr"] ?? video["playAddr"])
+                append(video: motion)
+            }
+        case .instagram:
+            func instagramItem(_ d: [String: Any]) {
+                let videos = d["video_versions"] as? [[String: Any]] ?? []
+                let motion = best(videos).flatMap { url($0["url"]) } ?? url(d["video_url"])
+                let isVideo = (d["is_video"] as? Bool) == true || number(d["media_type"]) == 2 || motion != nil
+                if isVideo { append(video: motion); return }
+                let versions = d["image_versions2"] as? [String: Any] ?? [:]
+                let candidates = versions["candidates"] as? [[String: Any]] ?? d["display_resources"] as? [[String: Any]] ?? []
+                let picture = best(candidates).flatMap { url($0["url"] ?? $0["src"]) } ?? url(d["display_url"])
+                append(image: picture)
+            }
+            let product = post["if_not_gated_logged_out"] as? [String: Any] ?? post
+            if let carousel = product["carousel_media"] as? [[String: Any]] { carousel.forEach(instagramItem) }
+            else if let edge = product["edge_sidecar_to_children"] as? [String: Any], let edges = edge["edges"] as? [[String: Any]] { edges.compactMap { $0["node"] as? [String: Any] }.forEach(instagramItem) }
+            else { instagramItem(product) }
+        case .weibo:
+            func picture(_ d: [String: Any]) {
+                let largest = d["largest"] as? [String: Any] ?? d["original"] as? [String: Any] ?? d["large"] as? [String: Any]
+                // Never upgrade a thumbnail URL by guessing a different path.
+                append(image: largest.flatMap { url($0["url"]) })
+            }
+            func movie(_ d: [String: Any]) {
+                let media = d["media_info"] as? [String: Any] ?? d
+                let streams = (media["playback_list"] as? [[String: Any]] ?? []).compactMap { $0["play_info"] as? [String: Any] }
+                if let best = best(streams), let source = url(best["url"]) { append(video: source); return }
+                for key in ["mp4_1080p_mp4", "mp4_720p_mp4", "stream_url_hd", "mp4_hd_url", "stream_url", "mp4_sd_url"] {
+                    if let source = url(media[key]) { append(video: source); return }
+                }
+            }
+            if let mix = post["mix_media_info"] as? [String: Any], let entries = mix["items"] as? [[String: Any]], !entries.isEmpty {
+                for entry in entries { if let d = entry["data"] as? [String: Any] { if entry["type"] as? String == "pic" { picture(d) } else { movie(d) } } }
+            } else {
+                if let pics = post["pics"] as? [[String: Any]] { pics.forEach(picture) }
+                else if let infos = post["pic_infos"] as? [String: Any], let ids = post["pic_ids"] as? [String] { ids.compactMap { infos[$0] as? [String: Any] }.forEach(picture) }
+                if let page = post["page_info"] as? [String: Any] { movie(page) }
+            }
+        case .xhs: break
+        }
+        guard !items.isEmpty else { throw LiveError.message("这篇帖子未提供可直接下载的图片／视频，可能需要登录或平台暂不提供文件地址。") }
+        return Note(id: target, title: (post["desc"] ?? post["title"] ?? post["text_raw"]) as? String ?? "\(platform.title)帖子", items: items)
     }
 }

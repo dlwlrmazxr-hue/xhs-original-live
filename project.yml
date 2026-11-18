@@ -27,6 +27,8 @@ targets:
       path: Info.plist
       properties:
         CFBundleDisplayName: 原图实况
+        CFBundleShortVersionString: 0.2.0
+        CFBundleVersion: 2
         NSPhotoLibraryAddUsageDescription: 将你选择下载的图片、视频和原图实况照片保存到系统相册。
         UILaunchScreen: {}
         CFBundleURLTypes:

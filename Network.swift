@@ -1,10 +1,33 @@
 import Foundation
+import WebKit
+
+enum MediaPlatform: String {
+    case xhs, douyin, weibo, instagram
+    var title: String {
+        switch self { case .xhs: return "小红书"; case .douyin: return "抖音"; case .weibo: return "微博"; case .instagram: return "Instagram" }
+    }
+    var roots: [String] {
+        switch self {
+        case .xhs: return ["xiaohongshu.com", "xhslink.com", "xhslink.cn"]
+        case .douyin: return ["douyin.com", "iesdouyin.com", "amemv.com"]
+        case .weibo: return ["weibo.com", "weibo.cn", "t.cn"]
+        case .instagram: return ["instagram.com"]
+        }
+    }
+    var home: String {
+        switch self { case .xhs: return "https://www.xiaohongshu.com/"; case .douyin: return "https://www.douyin.com/"; case .weibo: return "https://weibo.com/"; case .instagram: return "https://www.instagram.com/" }
+    }
+    static func identify(_ url: URL) -> MediaPlatform? {
+        guard let host = url.host?.lowercased() else { return nil }
+        return [Self.xhs, .douyin, .weibo, .instagram].first { platform in platform.roots.contains { host == $0 || host.hasSuffix("." + $0) } }
+    }
+}
 
 enum NetworkPolicy {
     static func allows(_ url: URL, media: Bool = false) -> Bool {
         guard url.scheme == "https", url.user == nil, url.password == nil,
               url.port == nil || url.port == 443, let host = url.host?.lowercased() else { return false }
-        let roots = ["xiaohongshu.com", "xhslink.com", "xhslink.cn"] + (media ? ["xhscdn.com"] : [])
+        let roots = [MediaPlatform.xhs, .douyin, .weibo, .instagram].flatMap(\.roots) + (media ? ["xhscdn.com", "douyinvod.com", "douyinpic.com", "byteimg.com", "ibytedtos.com", "pstatp.com", "snssdk.com", "bytecdn.cn", "weibocdn.com", "sinaimg.cn", "sina.com.cn", "cdninstagram.com", "fbcdn.net"] : [])
         return roots.contains { host == $0 || host.hasSuffix("." + $0) }
     }
 
@@ -13,7 +36,7 @@ enum NetworkPolicy {
         if string.hasPrefix("//") { string = "https:" + string }
         if string.hasPrefix("http://") { string = "https://" + String(string.dropFirst(7)) }
         guard let url = URL(string: string), allows(url, media: media) else {
-            throw LiveError.message("链接不是受支持的小红书地址。")
+            throw LiveError.message("链接不是受支持的平台或媒体地址。")
         }
         return url
     }
@@ -23,7 +46,7 @@ enum NetworkPolicy {
         for match in detector.matches(in: text, range: NSRange(text.startIndex..<text.endIndex, in: text)) {
             if let url = match.url, allows(url) { return url }
         }
-        throw LiveError.message("未找到小红书分享链接，请重新复制帖子的完整分享文案。")
+        throw LiveError.message("未找到支持的分享链接。支持小红书、抖音、微博、Instagram 的帖子链接。")
     }
 }
 
@@ -34,7 +57,14 @@ private final class RedirectPolicy: NSObject, URLSessionTaskDelegate {
                     willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(request.url.map { NetworkPolicy.allows($0, media: media) } == true ? request : nil)
+        guard request.url.map({ NetworkPolicy.allows($0, media: media) }) == true else { completionHandler(nil); return }
+        var next = request
+        // A platform login must never be forwarded to a different redirect host.
+        if request.url?.host != response.url?.host {
+            next.setValue(nil, forHTTPHeaderField: "Cookie")
+            next.setValue(nil, forHTTPHeaderField: "Authorization")
+        }
+        completionHandler(next)
     }
 }
 
@@ -50,10 +80,24 @@ enum Network {
         return URLSession(configuration: config, delegate: RedirectPolicy(media: media), delegateQueue: nil)
     }
 
-    private static func request(_ url: URL) -> URLRequest {
+    private static func request(_ url: URL) async -> URLRequest {
         var request = URLRequest(url: url)
         request.setValue(mobileAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("https://www.xiaohongshu.com/", forHTTPHeaderField: "Referer")
+        let platform = MediaPlatform.identify(url)
+        let host = url.host?.lowercased() ?? ""
+        let referer = platform?.home ?? (host.contains("sina") || host.contains("weibocdn") ? MediaPlatform.weibo.home : host.contains("instagram") || host.hasSuffix("fbcdn.net") ? MediaPlatform.instagram.home : host.contains("xhs") ? MediaPlatform.xhs.home : MediaPlatform.douyin.home)
+        request.setValue(referer, forHTTPHeaderField: "Referer")
+        if platform == .instagram { request.setValue("936619743392459", forHTTPHeaderField: "X-IG-App-ID") }
+        // Login cookies stay in the platform's on-device WebKit store. Media CDN
+        // requests receive none, and redirects strip cookies on a host change.
+        if platform != nil {
+            let cookies = await WKWebsiteDataStore.default().httpCookieStore.allCookies()
+            let matching = cookies.filter { cookie in
+                let domain = cookie.domain.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+                return (host == domain || host.hasSuffix("." + domain)) && url.path.hasPrefix(cookie.path) && (cookie.expiresDate == nil || cookie.expiresDate! > Date())
+            }
+            for (key,value) in HTTPCookie.requestHeaderFields(with: matching) { request.setValue(value, forHTTPHeaderField: key) }
+        }
         return request
     }
 
@@ -61,7 +105,7 @@ enum Network {
         guard NetworkPolicy.allows(url) else { throw LiveError.message("不支持的笔记域名。") }
         let client = session(media: false)
         defer { client.invalidateAndCancel() }
-        let (data, response) = try await client.data(for: request(url))
+        let (data, response) = try await client.data(for: await request(url))
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               let finalURL = response.url, NetworkPolicy.allows(finalURL), data.count < 16 * 1024 * 1024,
               let html = String(data: data, encoding: .utf8) else {
@@ -74,7 +118,7 @@ enum Network {
         guard NetworkPolicy.allows(url, media: true) else { throw LiveError.message("不支持的媒体域名。") }
         let client = session(media: true)
         defer { client.invalidateAndCancel() }
-        let (file, response) = try await client.download(for: request(url))
+        let (file, response) = try await client.download(for: await request(url))
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               let final = response.url, NetworkPolicy.allows(final, media: true) else {
             throw LiveError.message("媒体下载失败（源地址过期或平台拒绝访问）。")
