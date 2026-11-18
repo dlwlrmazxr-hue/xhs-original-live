@@ -275,7 +275,13 @@ enum SocialResolver {
             func picture(_ d: [String: Any]) {
                 let largest = d["largest"] as? [String: Any] ?? d["original"] as? [String: Any] ?? d["large"] as? [String: Any]
                 // Never upgrade a thumbnail URL by guessing a different path.
-                append(image: largest.flatMap { url($0["url"]) })
+                let still = largest.flatMap { url($0["url"]) }
+                var motion = url(d["video"] ?? d["videoSrc"])
+                if let raw = motion, let underlying = URLComponents(url: raw, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "livephoto" })?.value {
+                    motion = url(underlying)
+                }
+                let live = (d["type"] as? String)?.lowercased() == "livephoto"
+                append(image: still, video: live ? motion : nil, live: live)
             }
             func movie(_ d: [String: Any]) {
                 let media = d["media_info"] as? [String: Any] ?? d
@@ -285,7 +291,13 @@ enum SocialResolver {
                     if let source = url(media[key]) { append(video: source); return }
                 }
             }
-            if let mix = post["mix_media_info"] as? [String: Any], let entries = mix["items"] as? [[String: Any]], !entries.isEmpty {
+            if let infos = post["pic_infos"] as? [String: Any], let ids = post["pic_ids"] as? [String], !ids.isEmpty {
+                ids.compactMap { infos[$0] as? [String: Any] }.forEach(picture)
+                if let page = post["page_info"] as? [String: Any] { movie(page) }
+            } else if let pics = post["pics"] as? [[String: Any]], !pics.isEmpty {
+                for pic in pics { if (pic["type"] as? String)?.lowercased() == "video" { movie(pic) } else { picture(pic) } }
+                if let page = post["page_info"] as? [String: Any] { movie(page) }
+            } else if let mix = post["mix_media_info"] as? [String: Any], let entries = mix["items"] as? [[String: Any]], !entries.isEmpty {
                 for entry in entries { if let d = entry["data"] as? [String: Any] { if entry["type"] as? String == "pic" { picture(d) } else { movie(d) } } }
             } else {
                 if let pics = post["pics"] as? [[String: Any]] { pics.forEach(picture) }

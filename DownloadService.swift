@@ -23,7 +23,12 @@ enum DownloadService {
             case .live: return $0.isLive
             }
         }
-        guard !items.isEmpty else { throw LiveError.message("这篇笔记没有所选类型的媒体。") }
+        guard !items.isEmpty else {
+            if kind == .live, note.items.contains(where: { $0.image != nil }) {
+                throw LiveError.message("已读到图片，但没有取得与原图对应的实况动态文件；这不表示原帖没有 Live。请等待网页加载后重新读取，或先保存普通图片。")
+            }
+            throw LiveError.message("这篇帖子未返回所选类型的可下载媒体。")
+        }
         var report = SaveReport()
         for (index, item) in items.enumerated() {
             try Task.checkCancellation()

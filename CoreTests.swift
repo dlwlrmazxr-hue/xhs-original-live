@@ -207,3 +207,20 @@ extension CoreTests {
         #endif
     }
 }
+
+extension CoreTests {
+    func testWeiboLiveUsesMatchingOriginalAndMotion() throws {
+        let data = #"{"idstr":"12345","pic_ids":["picture"],"pic_infos":{"picture":{"type":"livephoto","largest":{"url":"https://wx1.sinaimg.cn/large/picture.jpg"},"video":"https://f.video.weibocdn.com/motion.mov"}},"mix_media_info":{"items":[{"type":"pic","data":{"largest":{"url":"https://wx1.sinaimg.cn/large/thumbnail.jpg"}}}]}}"#
+        let note = try SocialResolver.parse(html: data, platform: .weibo, target: "12345")
+        XCTAssertEqual(note.items.count, 1)
+        XCTAssertTrue(note.items[0].isLive)
+        XCTAssertEqual(note.items[0].image?.lastPathComponent, "picture.jpg")
+        XCTAssertEqual(note.items[0].video?.lastPathComponent, "motion.mov")
+    }
+    func testWeiboMobileLiveAndMissingMotion() throws {
+        let data = #"{"idstr":"12345","pics":[{"type":"livephoto","large":{"url":"https://wx1.sinaimg.cn/large/photo.jpg"},"videoSrc":"https://f.video.weibocdn.com/live.mov"},{"type":"livephoto","large":{"url":"https://wx1.sinaimg.cn/large/missing.jpg"}}]}"#
+        let note = try SocialResolver.parse(html: data, platform: .weibo, target: "12345")
+        XCTAssertTrue(note.items[0].isLive)
+        XCTAssertFalse(note.items[1].isLive)
+    }
+}

@@ -86,7 +86,7 @@ struct ContentView: View {
                     Picker("下载类型", selection: $model.kind) {
                         ForEach(DownloadKind.allCases) { item in Text(item.title).tag(item) }
                     }
-                    Text("微博、Instagram 请选图片或视频；实况需要帖子同时提供原图和对应动态片段。")
+                    Text("Instagram 请选图片或视频；微博、抖音实况需要同时取得原图和对应动态片段。")
                         .font(.footnote)
                     Button("开始保存", systemImage: "square.and.arrow.down") {
                         Task { _ = try? await model.run(text: model.text, kind: model.kind) }
