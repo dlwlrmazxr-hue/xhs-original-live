@@ -84,6 +84,7 @@ struct ContentView: View {
     @State private var showBrowser = false
     @State private var browserURL: URL?
     @State private var browserKind = DownloadKind.image
+    @State private var browserAutoSave = false
 
     var body: some View {
         NavigationStack {
@@ -101,7 +102,7 @@ struct ContentView: View {
                         Task { _ = try? await model.run(text: model.text, kind: model.kind) }
                     }.disabled(model.busy || model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     Button("网页登录／验证") {
-                        do { browserURL = try NetworkPolicy.shareLink(in: model.text); browserKind = model.kind; showBrowser = true }
+                        do { browserAutoSave = false; browserURL = try NetworkPolicy.shareLink(in: model.text); browserKind = model.kind; showBrowser = true }
                         catch { model.error = error.localizedDescription }
                     }
                     Text("直接下载失败时，可在官方网页自行登录或验证，再读取当前帖子。登录状态仅保存在本机；不会发送给解析服务器。网页资源的清晰度及水印以平台实际提供为准。")
@@ -132,11 +133,12 @@ struct ContentView: View {
                 guard let url else { return }
                 browserURL = url
                 browserKind = model.kind
+                browserAutoSave = true
                 showBrowser = true
                 model.instagramFallback = nil
             }
             .sheet(isPresented: $showBrowser) {
-                if let url = browserURL { PlatformBrowserSheet(url: url) { note in try await model.saveResolved(note, kind: browserKind) } }
+                if let url = browserURL { PlatformBrowserSheet(url: url, autoSave: browserAutoSave) { note in try await model.saveResolved(note, kind: browserKind) } }
             }
             .fileImporter(isPresented: $choosingImage, allowedContentTypes: [.image]) { result in
                 do { image = try result.get() } catch { model.error = error.localizedDescription }
@@ -162,8 +164,11 @@ import WebKit
     @Published var message = "等待页面加载。需要登录时，请在平台官方页面自行登录。"
     @Published var reading = false
     private var boundURL: URL?
+    private var autoSavePending: Bool
+    private var automaticRead: Task<Void, Never>?
     var save: ((Note) async throws -> String)?
-    init(url: URL) {
+    init(url: URL, autoSave: Bool) {
+        autoSavePending = autoSave
         initial = url
         if let p = MediaPlatform.identify(url), SocialResolver.id(in: url, platform: p) != nil { boundURL = url }
         let config = WKWebViewConfiguration()
@@ -230,9 +235,25 @@ import WebKit
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if boundURL == nil, let url = webView.url, let p = MediaPlatform.identify(url), SocialResolver.id(in: url, platform: p) != nil { boundURL = url }
         message = "页面加载完成。确认是目标帖子后，点「读取并保存」。"
+        guard autoSavePending, let current = webView.url, let bound = boundURL,
+              MediaPlatform.identify(current) == .instagram,
+              let target = SocialResolver.id(in: bound, platform: .instagram),
+              SocialResolver.id(in: current, platform: .instagram) == target else { return }
+        autoSavePending = false
+        message = "正在等待帖子图片加载…"
+        automaticRead = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 1_500_000_000) } catch { return }
+            guard let self, self.web.url == current else { return }
+            self.automaticRead = nil
+            await self.read()
+        }
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { message = error.localizedDescription }
+    func cancelAutomaticRead() { automaticRead?.cancel(); automaticRead = nil }
+
     func read() async {
+        cancelAutomaticRead()
+        autoSavePending = false
         guard !reading else { return }; reading = true; defer { reading = false }
         do {
             guard let current = web.url, let platform = MediaPlatform.identify(initial), let bound = boundURL,
@@ -278,8 +299,8 @@ struct PlatformWebView: UIViewRepresentable {
 struct PlatformBrowserSheet: View {
     @StateObject var browser: PlatformBrowserModel
     @Environment(\.dismiss) private var dismiss
-    init(url: URL, save: @escaping (Note) async throws -> String) {
-        let model = PlatformBrowserModel(url: url); model.save = save
+    init(url: URL, autoSave: Bool, save: @escaping (Note) async throws -> String) {
+        let model = PlatformBrowserModel(url: url, autoSave: autoSave); model.save = save
         _browser = StateObject(wrappedValue: model)
     }
     var body: some View {
@@ -296,6 +317,6 @@ struct PlatformBrowserSheet: View {
             }
             .navigationTitle("官方网页登录／验证").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("关闭") { dismiss() }.disabled(browser.reading) } }
-        }.interactiveDismissDisabled(browser.reading)
+        }.interactiveDismissDisabled(browser.reading).onDisappear { browser.cancelAutomaticRead() }
     }
 }

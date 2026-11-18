@@ -66,7 +66,16 @@ enum DownloadService {
                         } catch { lastError = error }
                     }
                     guard let prepared else { throw lastError }
-                    try await Network.download(video, to: motion, sourcePage: note.sourceURL, userAgent: note.userAgent)
+                    var downloaded = false
+                    for candidate in [video] + item.alternateVideos {
+                        try Task.checkCancellation()
+                        do {
+                            try await Network.download(candidate, to: motion, sourcePage: note.sourceURL, userAgent: note.userAgent)
+                            downloaded = true
+                            break
+                        } catch { lastError = error }
+                    }
+                    guard downloaded else { throw lastError }
                     let detail = try await savePair(prepared, video: motion, in: dir)
                     report.details.append("第 \(item.id) 项：" + detail)
                 }

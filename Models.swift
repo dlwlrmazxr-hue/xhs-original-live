@@ -26,6 +26,7 @@ struct MediaItem: Identifiable {
     let isLive: Bool
     let webVideo: Bool
     var alternateImages: [URL] = []
+    var alternateVideos: [URL] = []
 }
 
 struct Note {
