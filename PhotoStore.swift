@@ -2,6 +2,7 @@ import Foundation
 import Photos
 import ImageIO
 import AVFoundation
+import UniformTypeIdentifiers
 
 enum PhotoStore {
     private final class Once: @unchecked Sendable {
@@ -36,6 +37,7 @@ enum PhotoStore {
     }
 
     static func save(image: URL? = nil, video: URL? = nil, live: Bool = false) async throws {
+        let image = try image.map { try typedImage($0) }
         if let image {
             guard CGImageSourceCreateWithURL(image as CFURL, nil) != nil else { throw LiveError.message("图片文件无法识别。") }
         }
@@ -49,12 +51,56 @@ enum PhotoStore {
             let request = PHAssetCreationRequest.forAsset()
             if let image {
                 let options = PHAssetResourceCreationOptions()
+                options.originalFilename = image.lastPathComponent
                 if let source = CGImageSourceCreateWithURL(image as CFURL, nil), let type = CGImageSourceGetType(source) {
                     options.uniformTypeIdentifier = type as String
                 }
                 request.addResource(with: .photo, fileURL: image, options: options)
             }
             if let video { request.addResource(with: live ? .pairedVideo : .video, fileURL: video, options: nil) }
+        }
+    }
+
+    static func typedImage(_ source: URL) throws -> URL {
+        guard let reader = CGImageSourceCreateWithURL(source as CFURL, nil), let identifier = CGImageSourceGetType(reader),
+              let ext = UTType(identifier as String)?.preferredFilenameExtension else { throw LiveError.message("下载内容不是可识别的图片。") }
+        if source.pathExtension.lowercased() == ext.lowercased() { return source }
+        let output = source.deletingLastPathComponent().appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
+        try FileManager.default.copyItem(at: source, to: output)
+        return output
+    }
+
+    static func compatiblePNG(_ source: URL, output: URL) throws {
+        guard let reader = CGImageSourceCreateWithURL(source as CFURL, nil), CGImageSourceGetCount(reader) == 1,
+              let original = CGImageSourceCopyPropertiesAtIndex(reader, 0, nil),
+              let writer = CGImageDestinationCreateWithURL(output as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+            throw LiveError.message("无法无损导出这张图片；动画和多帧图片不会转换成静态图。")
+        }
+        CGImageDestinationAddImageFromSource(writer, reader, 0, original)
+        guard CGImageDestinationFinalize(writer), let check = CGImageSourceCreateWithURL(output as CFURL, nil),
+              let result = CGImageSourceCopyPropertiesAtIndex(check, 0, nil) as? [String: Any],
+              let before = original as? [String: Any],
+              result[kCGImagePropertyPixelWidth as String] as? Int == before[kCGImagePropertyPixelWidth as String] as? Int,
+              result[kCGImagePropertyPixelHeight as String] as? Int == before[kCGImagePropertyPixelHeight as String] as? Int else {
+            throw LiveError.message("PNG 导出尺寸校验失败，未存入相册。")
+        }
+    }
+
+    static func savePlainImage(_ source: URL) async throws -> String? {
+        let typed = try typedImage(source)
+        do { try await save(image: typed); return nil }
+        catch {
+            let failure = error as NSError
+            guard failure.domain == PHPhotosErrorDomain, failure.code == 3302 else { throw error }
+            let directory = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("下载原文件", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let original = directory.appendingPathComponent(typed.lastPathComponent)
+            try FileManager.default.copyItem(at: typed, to: original)
+            let png = source.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".png")
+            try compatiblePNG(typed, output: png)
+            do { try await save(image: png) }
+            catch { throw LiveError.message("原文件已保留到「文件 → 原图实况 → 下载原文件」，但相册仍拒绝 PNG：\(error.localizedDescription)") }
+            return "相册不接受原文件格式；已按原尺寸导出 PNG 保存，未缩放、未使用 JPEG 重压缩。原文件保留在「文件 → 原图实况 → 下载原文件」。"
         }
     }
 }

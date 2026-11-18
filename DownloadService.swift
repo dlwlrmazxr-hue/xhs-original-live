@@ -35,18 +35,18 @@ enum DownloadService {
                 case .image:
                     guard let url = item.image else { throw LiveError.message("没有源图片地址。") }
                     let path = dir.appendingPathComponent("photo.data")
-                    try await Network.download(url, to: path)
-                    try await PhotoStore.save(image: path)
+                    try await Network.download(url, to: path, sourcePage: note.sourceURL, userAgent: note.userAgent)
+                    if let detail = try await PhotoStore.savePlainImage(path) { report.details.append("第 \(item.id) 项：" + detail) }
                 case .video:
                     guard let url = item.video else { throw LiveError.message("没有动态资源地址。") }
                     let path = dir.appendingPathComponent("video.mp4")
-                    try await Network.download(url, to: path)
+                    try await Network.download(url, to: path, sourcePage: note.sourceURL, userAgent: note.userAgent)
                     try await PhotoStore.save(video: path)
                 case .live:
                     guard let image = item.image, let video = item.video else { throw LiveError.message("实况图片和动态片段不齐全。") }
                     let still = dir.appendingPathComponent("original.data"), motion = dir.appendingPathComponent("original.mp4")
-                    try await Network.download(image, to: still)
-                    try await Network.download(video, to: motion)
+                    try await Network.download(image, to: still, sourcePage: note.sourceURL, userAgent: note.userAgent)
+                    try await Network.download(video, to: motion, sourcePage: note.sourceURL, userAgent: note.userAgent)
                     let detail = try await combine(image: still, video: motion, in: dir)
                     report.details.append("第 \(item.id) 项：" + detail)
                 }

@@ -129,7 +129,8 @@ enum SocialResolver {
         guard let target = id(in: postURL, platform: platform), target.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else {
             throw LiveError.message("请复制具体帖子的链接，暂不支持主页、直播、Story 或微博 TV 单独视频链接。")
         }
-        if let note = try? parse(html: html, platform: platform, target: target) { return note }
+        func contextual(_ note: Note) -> Note { var result = note; result.sourceURL = postURL; result.userAgent = Network.mobileAgent; return result }
+        if let note = try? parse(html: html, platform: platform, target: target) { return contextual(note) }
         var endpoints: [String] = []
         switch platform {
         case .douyin: endpoints = ["https://www.iesdouyin.com/share/note/\(target)/", "https://www.iesdouyin.com/share/video/\(target)/"]
@@ -142,7 +143,7 @@ enum SocialResolver {
         for endpoint in endpoints {
             try Task.checkCancellation()
             guard let url = URL(string: endpoint) else { continue }
-            if let (body, _) = try? await Network.page(url), let note = try? parse(html: body, platform: platform, target: target) { return note }
+            if let (body, _) = try? await Network.page(url), let note = try? parse(html: body, platform: platform, target: target) { return contextual(note) }
         }
         throw LiveError.message("\(platform.title)没有返回这篇帖子的可下载资源。请点「网页登录／验证」，在官方页面打开目标帖子后重试；若仍失败，请提供错误截图。不能下载私密、已删除或无权限的内容。")
     }

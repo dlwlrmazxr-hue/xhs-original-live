@@ -212,7 +212,9 @@ import WebKit
                 note = try await SocialResolver.resolve(bound)
             }
             message = "正在保存…"
-            message = try await save?(note) ?? "没有保存任务。"
+            var contextual = note
+            contextual.sourceURL = current; contextual.userAgent = web.customUserAgent
+            message = try await save?(contextual) ?? "没有保存任务。"
         } catch { message = error.localizedDescription }
     }
     func standardPage() {

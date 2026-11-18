@@ -168,3 +168,42 @@ extension CoreTests {
         XCTAssertEqual(note.items[0].video?.lastPathComponent, "post.mp4")
     }
 }
+
+
+extension CoreTests {
+    func generatedWebP() -> Data { Data(base64Encoded: "UklGRiQAAABXRUJQVlA4TBcAAAAvd8ATAAdQvJIUuf9hABLC//1SRP9TVwA=")! }
+    func testTypedImagePreservesOriginalBytes() throws {
+        let dir = try DownloadService.folder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("photo.data"), data = try imageJPEG()
+        try data.write(to: source)
+        let typed = try PhotoStore.typedImage(source)
+        XCTAssertTrue(["jpg", "jpeg"].contains(typed.pathExtension))
+        XCTAssertEqual(try Data(contentsOf: typed), data)
+    }
+    func testWebPCompatibilityPNGKeepsDimensions() throws {
+        let dir = try DownloadService.folder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("image.data"), output = dir.appendingPathComponent("image.png")
+        let bytes = generatedWebP(); try bytes.write(to: source)
+        try PhotoStore.compatiblePNG(source, output: output)
+        let image = try XCTUnwrap(CGImageSourceCreateWithURL(output as CFURL, nil))
+        let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil)! as NSDictionary
+        XCTAssertEqual(properties[kCGImagePropertyPixelWidth] as? Int, 120)
+        XCTAssertEqual(properties[kCGImagePropertyPixelHeight] as? Int, 80)
+        XCTAssertEqual(try Data(contentsOf: source), bytes)
+    }
+    func testSimulatorPhotoLibraryImportsJPEGAndWebP() async throws {
+        #if targetEnvironment(simulator)
+        guard PHPhotoLibrary.authorizationStatus(for: .addOnly) == .authorized else {
+            XCTFail("CI must grant photos-add permission before running import tests"); return
+        }
+        let dir = try DownloadService.folder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let jpeg = dir.appendingPathComponent("plain.data"), webp = dir.appendingPathComponent("web.data")
+        try imageJPEG().write(to: jpeg); try generatedWebP().write(to: webp)
+        _ = try await PhotoStore.savePlainImage(jpeg)
+        _ = try await PhotoStore.savePlainImage(webp)
+        // This test writes only to an ephemeral CI simulator, never a real phone.
+        #else
+        throw XCTSkip("Only the disposable simulator library may be used")
+        #endif
+    }
+}

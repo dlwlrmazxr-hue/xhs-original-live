@@ -31,6 +31,8 @@ struct Note {
     let id: String
     let title: String
     let items: [MediaItem]
+    var sourceURL: URL? = nil
+    var userAgent: String? = nil
 }
 
 struct SaveReport {

@@ -21,7 +21,12 @@ jobs:
           echo "SIMULATOR_ID=$SIMULATOR_ID" >> "$GITHUB_ENV"
       - name: Compile and run native tests
         run: |
-          xcodebuild test -project XHSOriginalLive.xcodeproj -scheme XHSOriginalLive -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/simulator -resultBundlePath build/TestResults.xcresult CODE_SIGNING_ALLOWED=NO
+          xcodebuild build-for-testing -project XHSOriginalLive.xcodeproj -scheme XHSOriginalLive -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/simulator -resultBundlePath build/TestResults.xcresult CODE_SIGNING_ALLOWED=NO
+          xcrun simctl boot "$SIMULATOR_ID" || true
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+          xcrun simctl install "$SIMULATOR_ID" build/simulator/Build/Products/Debug-iphonesimulator/XHSOriginalLive.app
+          xcrun simctl privacy "$SIMULATOR_ID" grant photos-add local.originallive.xhs
+          xcodebuild test-without-building -project XHSOriginalLive.xcodeproj -scheme XHSOriginalLive -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/simulator -resultBundlePath build/ImportTestResults.xcresult CODE_SIGNING_ALLOWED=NO
       - name: Build unsigned physical-device app
         run: |
           xcodebuild build -project XHSOriginalLive.xcodeproj -scheme XHSOriginalLive -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/device CODE_SIGNING_ALLOWED=NO
@@ -40,6 +45,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-test-results
-          path: build/TestResults.xcresult
+          path: build/*TestResults.xcresult
           if-no-files-found: ignore
           retention-days: 7

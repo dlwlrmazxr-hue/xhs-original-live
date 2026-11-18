@@ -80,13 +80,14 @@ enum Network {
         return URLSession(configuration: config, delegate: RedirectPolicy(media: media), delegateQueue: nil)
     }
 
-    private static func request(_ url: URL) async -> URLRequest {
+    private static func request(_ url: URL, sourcePage: URL? = nil, userAgent: String? = nil) async -> URLRequest {
         var request = URLRequest(url: url)
-        request.setValue(mobileAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgent ?? mobileAgent, forHTTPHeaderField: "User-Agent")
         let platform = MediaPlatform.identify(url)
         let host = url.host?.lowercased() ?? ""
         let referer = platform?.home ?? (host.contains("sina") || host.contains("weibocdn") ? MediaPlatform.weibo.home : host.contains("instagram") || host.hasSuffix("fbcdn.net") ? MediaPlatform.instagram.home : host.contains("xhs") ? MediaPlatform.xhs.home : MediaPlatform.douyin.home)
         request.setValue(referer, forHTTPHeaderField: "Referer")
+        if let sourcePage, NetworkPolicy.allows(sourcePage) { request.setValue(sourcePage.absoluteString, forHTTPHeaderField: "Referer") }
         if platform == .instagram { request.setValue("936619743392459", forHTTPHeaderField: "X-IG-App-ID") }
         // Login cookies stay in the platform's on-device WebKit store. Media CDN
         // requests receive none, and redirects strip cookies on a host change.
@@ -114,14 +115,15 @@ enum Network {
         return (html, finalURL)
     }
 
-    static func download(_ url: URL, to target: URL) async throws {
+    static func download(_ url: URL, to target: URL, sourcePage: URL? = nil, userAgent: String? = nil) async throws {
         guard NetworkPolicy.allows(url, media: true) else { throw LiveError.message("不支持的媒体域名。") }
         let client = session(media: true)
         defer { client.invalidateAndCancel() }
-        let (file, response) = try await client.download(for: await request(url))
+        let (file, response) = try await client.download(for: await request(url, sourcePage: sourcePage, userAgent: userAgent))
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               let final = response.url, NetworkPolicy.allows(final, media: true) else {
-            throw LiveError.message("媒体下载失败（源地址过期或平台拒绝访问）。")
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw LiveError.message("媒体下载失败：HTTP \(status)，资源主机 \(url.host ?? "未知")。未将错误网页当作媒体保存。")
         }
         let size = (try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
         guard size > 0, size <= 512 * 1024 * 1024 else { throw LiveError.message("媒体为空或超过本版本的 512 MB 文件上限。") }
