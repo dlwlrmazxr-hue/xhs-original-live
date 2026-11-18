@@ -43,8 +43,13 @@
   ],
   "project_and_workflow": "parsed_and_structurally_checked",
   "synthetic_note_fixture": "valid_JSON",
-  "native_sdk_build": "not_run_no_Apple_SDK",
-  "native_tests": "written_not_run",
+  "native_sdk_build": "Xcode_16.4_simulator_app_and_tests_compiled",
+  "native_tests": "4_passed_1_failed_in_run_44273400389; corrected_run_44303974285_queued",
   "iphone_27_2_test": "not_run",
-  "image_metadata_review": "untagged_MPF_HDR_rejected_without_rewriting"
+  "image_metadata_review": "untagged_MPF_HDR_rejected_without_rewriting",
+  "physical_device_build": "pending_native_test_success",
+  "retry_runs": [
+    44303974285,
+    44305484107
+  ]
 }
