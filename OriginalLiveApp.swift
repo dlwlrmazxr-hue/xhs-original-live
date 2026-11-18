@@ -85,6 +85,8 @@ struct ContentView: View {
                     Picker("下载类型", selection: $model.kind) {
                         ForEach(DownloadKind.allCases) { item in Text(item.title).tag(item) }
                     }
+                    Text("微博、Instagram 请选图片或视频；实况需要帖子同时提供原图和对应动态片段。")
+                        .font(.footnote)
                     Button("开始保存", systemImage: "square.and.arrow.down") {
                         Task { _ = try? await model.run(text: model.text, kind: model.kind) }
                     }.disabled(model.busy || model.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -201,10 +203,28 @@ import WebKit
             guard let raw = raw as? String, raw.utf8.count < 20 * 1024 * 1024,
                   let data = raw.data(using: .utf8), let snapshot = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw LiveError.message("页面数据过大或不可读取。") }
             let html = snapshot["html"] as? String ?? ""
-            let note = platform == .xhs ? try NoteResolver.parse(html: html, url: bound) : try SocialResolver.parse(html: html, platform: platform, target: target, payloads: snapshot["payloads"] as? [String] ?? [])
+            let note: Note
+            if platform == .xhs { note = try NoteResolver.parse(html: html, url: bound) }
+            else if let parsed = try? SocialResolver.parse(html: html, platform: platform, target: target, payloads: snapshot["payloads"] as? [String] ?? []) { note = parsed }
+            else {
+                message = "正在使用本机登录状态重新读取目标帖子…"
+                note = try await SocialResolver.resolve(bound)
+            }
             message = "正在保存…"
             message = try await save?(note) ?? "没有保存任务。"
         } catch { message = error.localizedDescription }
+    }
+    func standardPage() {
+        guard let bound = boundURL, let p = MediaPlatform.identify(bound), let id = SocialResolver.id(in: bound, platform: p) else { return }
+        let path: String
+        switch p {
+        case .douyin: path = "https://www.douyin.com/note/\(id)"
+        case .instagram: path = "https://www.instagram.com/p/\(id)/"
+        case .weibo: path = "https://m.weibo.cn/detail/\(id)"
+        case .xhs: path = bound.absoluteString
+        }
+        web.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15"
+        if let url = URL(string: path) { web.load(URLRequest(url: url)) }
     }
 }
 
@@ -227,6 +247,7 @@ struct PlatformBrowserSheet: View {
                 Text(browser.message).font(.footnote).textSelection(.enabled).padding(.horizontal)
                 HStack {
                     Button("返回目标帖子") { browser.web.load(URLRequest(url: browser.initial)) }.disabled(browser.reading)
+                    Button("标准网页") { browser.standardPage() }.disabled(browser.reading)
                     Button("读取并保存") { Task { await browser.read() } }.disabled(browser.reading)
                 }
                 PlatformWebView(model: browser)

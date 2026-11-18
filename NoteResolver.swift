@@ -134,7 +134,9 @@ enum SocialResolver {
         switch platform {
         case .douyin: endpoints = ["https://www.iesdouyin.com/share/note/\(target)/", "https://www.iesdouyin.com/share/video/\(target)/"]
         case .weibo: endpoints = ["https://weibo.com/ajax/statuses/show?id=\(target)", "https://m.weibo.cn/statuses/show?id=\(target)"]
-        case .instagram: endpoints = ["https://www.instagram.com/p/\(target)/embed/captioned/"]
+        case .instagram:
+            if let pk = instagramPK(target) { endpoints.append("https://www.instagram.com/api/v1/media/\(pk)/info/") }
+            endpoints.append("https://www.instagram.com/p/\(target)/embed/captioned/")
         case .xhs: break
         }
         for endpoint in endpoints {
