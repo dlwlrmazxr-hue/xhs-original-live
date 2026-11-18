@@ -1,0 +1,50 @@
+{
+  "swift_syntax": [
+    {
+      "file": "App/DownloadService.swift",
+      "syntax_errors": []
+    },
+    {
+      "file": "App/Intents.swift",
+      "syntax_errors": []
+    },
+    {
+      "file": "App/Models.swift",
+      "syntax_errors": []
+    },
+    {
+      "file": "App/MoviePairer.swift",
+      "syntax_errors": []
+    },
+    {
+      "file": "App/Network.swift",
+      "syntax_errors": []
+    },
+    {
+      "file": "App/NoteResolver.swift",
+      "syntax_errors": []
+    },
+    {
+      "file": "App/OriginalImage.swift",
+      "syntax_errors": []
+    },
+    {
+      "file": "App/OriginalLiveApp.swift",
+      "syntax_errors": []
+    },
+    {
+      "file": "App/PhotoStore.swift",
+      "syntax_errors": []
+    },
+    {
+      "file": "Tests/CoreTests.swift",
+      "syntax_errors": []
+    }
+  ],
+  "project_and_workflow": "parsed_and_structurally_checked",
+  "synthetic_note_fixture": "valid_JSON",
+  "native_sdk_build": "not_run_no_Apple_SDK",
+  "native_tests": "written_not_run",
+  "iphone_27_2_test": "not_run",
+  "image_metadata_review": "untagged_MPF_HDR_rejected_without_rewriting"
+}

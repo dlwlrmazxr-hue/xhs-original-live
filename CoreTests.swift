@@ -1,0 +1,117 @@
+import XCTest
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
+import AVFoundation
+import CoreVideo
+import CoreMedia
+import Photos
+@testable import XHSOriginalLive
+
+final class CoreTests: XCTestCase {
+    func imageJPEG() throws -> Data {
+        let pixels = [UInt8](repeating: 128, count: 96 * 64 * 4)
+        let provider = CGDataProvider(data: Data(pixels) as CFData)!
+        let image = CGImage(width: 96, height: 64, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 96*4,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+        let data = NSMutableData()
+        let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, image, [kCGImagePropertyOrientation: 6] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
+    func testJPEGPairingKeepsCompressedImageAndOrientation() throws {
+        let dir = try DownloadService.folder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let original = try imageJPEG(), id = UUID().uuidString
+        let tagged = try LosslessJPEG.tag(original, identifier: id)
+        XCTAssertEqual(try LosslessJPEG.scanData(original), try LosslessJPEG.scanData(tagged))
+        let url = dir.appendingPathComponent("photo.jpg"); try tagged.write(to: url)
+        XCTAssertEqual(OriginalImage.identifier(at: url), id)
+        let image = CGImageSourceCreateWithURL(url as CFURL, nil)!
+        let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil)! as NSDictionary
+        XCTAssertEqual(properties[kCGImagePropertyPixelWidth] as? Int, 96)
+        XCTAssertEqual(properties[kCGImagePropertyPixelHeight] as? Int, 64)
+        XCTAssertEqual(properties[kCGImagePropertyOrientation] as? Int, 6)
+        let prepared = try OriginalImage.prepare(source: url, output: dir.appendingPathComponent("copy.jpg"))
+        XCTAssertTrue(prepared.unchanged)
+        XCTAssertEqual(try Data(contentsOf: prepared.url), tagged)
+    }
+
+    func testMalformedJPEGDoesNotProduceFakeSuccess() throws {
+        XCTAssertThrowsError(try LosslessJPEG.tag(Data([1,2,3]), identifier: UUID().uuidString))
+        XCTAssertThrowsError(try LosslessJPEG.tag(Data([0xff,0xd8,0xff,0xe1,0xff,0xff]), identifier: UUID().uuidString))
+        var untaggedMPO = try imageJPEG()
+        untaggedMPO.insert(contentsOf: [0xff,0xe2,0,6,77,80,70,0], at: 2)
+        XCTAssertThrowsError(try LosslessJPEG.tag(untaggedMPO, identifier: UUID().uuidString))
+    }
+
+    func testNetworkAllowlistAndShareText() throws {
+        XCTAssertFalse(NetworkPolicy.allows(URL(string: "https://xiaohongshu.com.evil.test/a")!))
+        XCTAssertFalse(NetworkPolicy.allows(URL(string: "https://www.xiaohongshu.com@evil.test/a")!))
+        XCTAssertFalse(NetworkPolicy.allows(URL(string: "http://www.xiaohongshu.com/a")!))
+        XCTAssertEqual(try NetworkPolicy.shareLink(in: "笔记 https://xhslink.cn/o/fixture 来看看").host, "xhslink.cn")
+    }
+
+    func testMobileNoteAndUndefinedInsideStrings() throws {
+        let id = "123456789012345678901234"
+        let html = #"<script>window.__INITIAL_STATE__={"unused":undefined,"noteData":{"data":{"noteData":{"noteId":"123456789012345678901234","title":"undefined {quoted}","imageList":[{"fileId":"abc/fixture","livePhoto":true,"stream":{"h264":[{"width":640,"height":480,"masterUrl":"https://sns-video-bd.xhscdn.com/low.mp4"},{"width":1080,"height":1440,"masterUrl":"https://sns-video-bd.xhscdn.com/high.mp4"}]}}]}}}};</script>"#
+        let note = try NoteResolver.parse(html: html, url: URL(string: "https://www.xiaohongshu.com/discovery/item/\(id)")!)
+        XCTAssertEqual(note.title, "undefined {quoted}")
+        XCTAssertEqual(note.items.first?.video?.lastPathComponent, "high.mp4")
+        XCTAssertEqual(note.items.first?.image?.path, "/abc/fixture")
+        XCTAssertTrue(note.items.first!.isLive)
+        XCTAssertThrowsError(try NoteResolver.parse(html: html, url: URL(string: "https://www.xiaohongshu.com/explore/aaaaaaaaaaaaaaaaaaaaaaaa")!))
+    }
+
+    func makeVideo(at url: URL) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 96])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 96])
+        writer.add(input); XCTAssertTrue(writer.startWriting()); writer.startSession(atSourceTime: .zero)
+        for frame in 0..<36 {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+            var buffer: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 64, 96, kCVPixelFormatType_32BGRA, nil, &buffer), kCVReturnSuccess)
+            let pixel = try XCTUnwrap(buffer)
+            CVPixelBufferLockBaseAddress(pixel, [])
+            let address = try XCTUnwrap(CVPixelBufferGetBaseAddress(pixel))
+            memset(address, Int32(frame * 5), CVPixelBufferGetBytesPerRow(pixel) * 96)
+            CVPixelBufferUnlockBaseAddress(pixel, [])
+            XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(frame), timescale: 24)))
+        }
+        input.markAsFinished(); await writer.finishWriting()
+        XCTAssertEqual(writer.status, .completed)
+    }
+
+    func compressedSamples(at url: URL) async throws -> [Data] {
+        let asset = AVURLAsset(url: url)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let output = AVAssetReaderTrackOutput(track: try XCTUnwrap(tracks.first), outputSettings: nil)
+        // The output's track must belong to the reader's AVAsset instance.
+        let actualReader = try AVAssetReader(asset: asset)
+        actualReader.add(output); XCTAssertTrue(actualReader.startReading())
+        var samples: [Data] = []
+        while let sample = output.copyNextSampleBuffer() {
+            let block = try XCTUnwrap(CMSampleBufferGetDataBuffer(sample))
+            var bytes = Data(count: CMBlockBufferGetDataLength(block))
+            let status = bytes.withUnsafeMutableBytes { CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: $0.count, destination: $0.baseAddress!) }
+            XCTAssertEqual(status, noErr); samples.append(bytes)
+        }
+        return samples
+    }
+
+    func testNativePairValidatesAndMovieSamplesAreUnchanged() async throws {
+        let dir = try DownloadService.folder(); defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("source.jpg"), input = dir.appendingPathComponent("input.mp4"), movie = dir.appendingPathComponent("pair.mov")
+        try imageJPEG().write(to: source)
+        try await makeVideo(at: input)
+        let image = try OriginalImage.prepare(source: source, output: dir.appendingPathComponent("paired.jpg"))
+        try await MoviePairer.pair(source: input, output: movie, identifier: image.identifier)
+        let before = try await compressedSamples(at: input), after = try await compressedSamples(at: movie)
+        XCTAssertFalse(before.isEmpty); XCTAssertEqual(before, after)
+        try await PhotoStore.validateLive(image: image.url, video: movie)
+        // No CI test writes to a person's real photo library.
+    }
+}
