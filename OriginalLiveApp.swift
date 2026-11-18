@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
     @Published var status = "支持小红书、抖音、微博和 Instagram。"
     @Published var result = ""
     @Published var error: String?
-    @Published var instagramFallback: URL?
+    @Published var webFallback: URL?
 
     func run(text: String, kind: DownloadKind) async throws -> String {
         guard !busy else { throw LiveError.message("已有任务正在运行，请等它完成。") }
@@ -18,11 +18,12 @@ import UniformTypeIdentifiers
         defer { busy = false }
         do {
             let note: Note
-            do { note = try await NoteResolver.resolve(text) }
+            do { note = try await NoteResolver.resolve(text, requireLive: kind == .live) }
             catch {
                 try Task.checkCancellation()
-                if kind != .live, let url = try? NetworkPolicy.shareLink(in: text), MediaPlatform.identify(url) == .instagram {
-                    instagramFallback = url
+                if let url = try? NetworkPolicy.shareLink(in: text),
+                   (kind != .live && MediaPlatform.identify(url) == .instagram) || (kind == .live && MediaPlatform.identify(url) == .douyin) {
+                    webFallback = url
                 }
                 throw error
             }
@@ -129,16 +130,16 @@ struct ContentView: View {
             }
             .navigationTitle("原图实况 · 多平台版")
             .disabled(model.busy)
-            .onChange(of: model.instagramFallback) { _, url in
+            .onChange(of: model.webFallback) { _, url in
                 guard let url else { return }
                 browserURL = url
                 browserKind = model.kind
                 browserAutoSave = true
                 showBrowser = true
-                model.instagramFallback = nil
+                model.webFallback = nil
             }
             .sheet(isPresented: $showBrowser) {
-                if let url = browserURL { PlatformBrowserSheet(url: url, autoSave: browserAutoSave) { note in try await model.saveResolved(note, kind: browserKind) } }
+                if let url = browserURL { PlatformBrowserSheet(url: url, kind: browserKind, autoSave: browserAutoSave) { note in try await model.saveResolved(note, kind: browserKind) } }
             }
             .fileImporter(isPresented: $choosingImage, allowedContentTypes: [.image]) { result in
                 do { image = try result.get() } catch { model.error = error.localizedDescription }
@@ -164,10 +165,13 @@ import WebKit
     @Published var message = "等待页面加载。需要登录时，请在平台官方页面自行登录。"
     @Published var reading = false
     private var boundURL: URL?
+    private let kind: DownloadKind
     private var autoSavePending: Bool
+    private var openedStandardDouyinPage = false
     private var automaticRead: Task<Void, Never>?
     var save: ((Note) async throws -> String)?
-    init(url: URL, autoSave: Bool) {
+    init(url: URL, kind: DownloadKind, autoSave: Bool) {
+        self.kind = kind
         autoSavePending = autoSave
         initial = url
         if let p = MediaPlatform.identify(url), SocialResolver.id(in: url, platform: p) != nil { boundURL = url }
@@ -223,7 +227,12 @@ import WebKit
         web = WKWebView(frame: .zero, configuration: config)
         super.init()
         web.navigationDelegate = self
-        web.customUserAgent = Network.mobileAgent
+        if kind == .live, MediaPlatform.identify(url) == .douyin {
+            if boundURL != nil { standardPage(); return }
+            web.customUserAgent = Self.standardAgent
+        } else {
+            web.customUserAgent = Network.mobileAgent
+        }
         web.load(URLRequest(url: initial))
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -234,13 +243,18 @@ import WebKit
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if boundURL == nil, let url = webView.url, let p = MediaPlatform.identify(url), SocialResolver.id(in: url, platform: p) != nil { boundURL = url }
+        if kind == .live, !openedStandardDouyinPage, let bound = boundURL,
+           MediaPlatform.identify(bound) == .douyin, bound.path.hasPrefix("/share/") {
+            standardPage()
+            return
+        }
         message = "页面加载完成。确认是目标帖子后，点「读取并保存」。"
         guard autoSavePending, let current = webView.url, let bound = boundURL,
-              MediaPlatform.identify(current) == .instagram,
-              let target = SocialResolver.id(in: bound, platform: .instagram),
-              SocialResolver.id(in: current, platform: .instagram) == target else { return }
+              let platform = MediaPlatform.identify(current),
+              let target = SocialResolver.id(in: bound, platform: platform),
+              SocialResolver.id(in: current, platform: platform) == target else { return }
         autoSavePending = false
-        message = "正在等待帖子图片加载…"
+        message = "正在等待帖子媒体加载…"
         automaticRead = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: 1_500_000_000) } catch { return }
             guard let self, self.web.url == current else { return }
@@ -266,10 +280,10 @@ import WebKit
             let html = snapshot["html"] as? String ?? ""
             let note: Note
             if platform == .xhs { note = try NoteResolver.parse(html: html, url: bound) }
-            else if let parsed = try? SocialResolver.parse(html: html, platform: platform, target: target, payloads: snapshot["payloads"] as? [String] ?? []) { note = parsed }
+            else if let parsed = try? SocialResolver.parse(html: html, platform: platform, target: target, payloads: snapshot["payloads"] as? [String] ?? []), kind != .live || parsed.items.contains(where: { $0.isLive }) { note = parsed }
             else {
                 message = "正在使用本机登录状态重新读取目标帖子…"
-                note = try await SocialResolver.resolve(bound)
+                note = try await SocialResolver.resolve(bound, requireLive: kind == .live)
             }
             message = "正在保存…"
             var contextual = note
@@ -277,16 +291,21 @@ import WebKit
             message = try await save?(contextual) ?? "没有保存任务。"
         } catch { message = error.localizedDescription }
     }
+    private static let standardAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15"
+
     func standardPage() {
         guard let bound = boundURL, let p = MediaPlatform.identify(bound), let id = SocialResolver.id(in: bound, platform: p) else { return }
         let path: String
         switch p {
-        case .douyin: path = "https://www.douyin.com/note/\(id)"
+        case .douyin:
+            openedStandardDouyinPage = true
+            let route = bound.pathComponents.contains("video") ? "video" : "note"
+            path = "https://www.douyin.com/\(route)/\(id)"
         case .instagram: path = "https://www.instagram.com/p/\(id)/"
         case .weibo: path = "https://m.weibo.cn/detail/\(id)"
         case .xhs: path = bound.absoluteString
         }
-        web.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15"
+        web.customUserAgent = Self.standardAgent
         if let url = URL(string: path) { web.load(URLRequest(url: url)) }
     }
 }
@@ -299,8 +318,8 @@ struct PlatformWebView: UIViewRepresentable {
 struct PlatformBrowserSheet: View {
     @StateObject var browser: PlatformBrowserModel
     @Environment(\.dismiss) private var dismiss
-    init(url: URL, autoSave: Bool, save: @escaping (Note) async throws -> String) {
-        let model = PlatformBrowserModel(url: url, autoSave: autoSave); model.save = save
+    init(url: URL, kind: DownloadKind, autoSave: Bool, save: @escaping (Note) async throws -> String) {
+        let model = PlatformBrowserModel(url: url, kind: kind, autoSave: autoSave); model.save = save
         _browser = StateObject(wrappedValue: model)
     }
     var body: some View {

@@ -1,9 +1,9 @@
 import Foundation
 
 enum NoteResolver {
-    static func resolve(_ text: String) async throws -> Note {
+    static func resolve(_ text: String, requireLive: Bool = false) async throws -> Note {
         let original = try NetworkPolicy.shareLink(in: text)
-        if MediaPlatform.identify(original) != .xhs { return try await SocialResolver.resolve(original) }
+        if MediaPlatform.identify(original) != .xhs { return try await SocialResolver.resolve(original, requireLive: requireLive) }
         let (html, final) = try await Network.page(original)
         // A long URL's note ID remains authoritative even after an unexpected redirect.
         let identity = noteID(in: original) == nil ? final : original
@@ -121,7 +121,7 @@ enum SocialResolver {
         return nil
     }
 
-    static func resolve(_ original: URL) async throws -> Note {
+    static func resolve(_ original: URL, requireLive: Bool = false) async throws -> Note {
         guard let platform = MediaPlatform.identify(original), platform != .xhs else { throw LiveError.message("不支持的平台。") }
         let (html, final) = try await Network.page(original)
         guard MediaPlatform.identify(final) == platform else { throw LiveError.message("分享链接跳转到了其他平台，已停止。") }
@@ -130,7 +130,8 @@ enum SocialResolver {
             throw LiveError.message("请复制具体帖子的链接，暂不支持主页、直播、Story 或微博 TV 单独视频链接。")
         }
         func contextual(_ note: Note) -> Note { var result = note; result.sourceURL = postURL; result.userAgent = Network.mobileAgent; return result }
-        if let note = try? parse(html: html, platform: platform, target: target) { return contextual(note) }
+        func usable(_ note: Note) -> Bool { !requireLive || note.items.contains { $0.isLive } }
+        if let note = try? parse(html: html, platform: platform, target: target), usable(note) { return contextual(note) }
         var endpoints: [String] = []
         switch platform {
         case .douyin: endpoints = ["https://www.iesdouyin.com/share/note/\(target)/", "https://www.iesdouyin.com/share/video/\(target)/"]
@@ -143,7 +144,10 @@ enum SocialResolver {
         for endpoint in endpoints {
             try Task.checkCancellation()
             guard let url = URL(string: endpoint) else { continue }
-            if let (body, _) = try? await Network.page(url), let note = try? parse(html: body, platform: platform, target: target) { return contextual(note) }
+            if let (body, _) = try? await Network.page(url), let note = try? parse(html: body, platform: platform, target: target), usable(note) { return contextual(note) }
+        }
+        if requireLive {
+            throw LiveError.message("暂未取得原图对应的实况动态文件。可打开标准网页，等实况图加载后再试。")
         }
         throw LiveError.message("\(platform.title)没有返回这篇帖子的可下载资源。请点「网页登录／验证」，在官方页面打开目标帖子后重试；若仍失败，请提供错误截图。不能下载私密、已删除或无权限的内容。")
     }
