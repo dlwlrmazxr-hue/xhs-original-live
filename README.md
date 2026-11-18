@@ -1,89 +1,55 @@
-# 原图实况 0.2：多平台扩展
+# 原图实况 0.2
 
-新增抖音、微博和 Instagram 帖子图片／视频解析及本机官方网页登录。使用与限制见 [UPGRADE-0.2.md](UPGRADE-0.2.md)。首轮 10 项原生测试已通过，最终构建结果见 Actions。真实帖子下载仍需真机验证。
+在 iPhone 本机保存小红书图片、视频和原图封面的 Live Photo。0.2 新增抖音、微博、Instagram 帖子图片／视频解析，以及 App 内的官方网页登录／验证入口；加入原创桌面图标。
 
-以下原图实况说明仍适用；本版可选网页登录状态保存在本机 WebKit 数据区，原先「不保存 Cookie」的说明以本段及升级说明为准。
+## 当前验证结果
 
-# 原图实况：首版开发源码
+- 0.1 已完成 Xcode 编译、5 项原生测试，并得到用户在 iOS 27.2 上安装与使用成功的反馈。
+- 0.2 最终带图标安装包（0.2.0，build 3）已完成 10 项原生测试，0 失败，并成功编译 arm64 真机 IPA。成功运行：https://github.com/dlwlrmazxr-hue/xhs-original-live/actions/runs/44318518932 。原生测试使用合成样本，不包含用户笔记或媒体。
+- 用户提供的抖音／Instagram 帖子在无登录探测中返回了网页，但未给出完整初始媒体数据；微博要求访客验证或拒绝匿名接口。三篇帖子的实际下载、网页登录和相册保存仍待真机验证，不能把单元测试通过当作真实下载成功。
 
-一个为个人使用编写的 iPhone App：读取小红书分享链接，选择图片、视频或 Live 实况照片，保存到系统照片。还支持从「文件」选择一张原图和一段视频，在手机上配对保存。
+使用与升级步骤见 [UPGRADE-0.2.md](UPGRADE-0.2.md)。
 
-**已生成未签名 IPA，尚未完成 iOS 27.2 真机保存验证。** 2026-11-18 在 GitHub 的 Xcode 16.4 / iOS 18.5 模拟器环境完成全部 5 项原生测试，0 失败，并成功编译 arm64 真机安装包。[成功运行记录（第 2 次尝试）](https://github.com/dlwlrmazxr-hue/xhs-original-live/actions/runs/44303974285)。测试使用程序生成的样本，不能代替真实笔记下载和手机相册保存验证。
+## 保存方式
 
-## 为你的要求做的设计
+复制具体帖子的分享链接或文案，选择图片／视频／实况类型，点击开始保存。平台要求登录或验证时，可打开「网页登录／验证」，在官方页面自行完成，再点「读取并保存」；移动分享页只显示打开 App 时，可尝试「标准网页」。
 
-- 不使用「实况捷径」、Scriptable、付费解析接口或合成服务。
-- 无会员、广告、按张计费、每日额度或远程配置开关。
-- Live 封面必须来自高清图片源地址，不从视频截帧。
-- 原图已有 Apple MakerNote 17 配对标识时：复制整张原图并逐字节校验，视频使用同一个标识。
-- 原图没有配对标识时：首版只对 JPEG 补写 EXIF 配对信息，不解码、不缩放、不重新编码；保存前比较 JPEG 压缩图像数据，改变则报错停止。已有其他 MakerNote 的 JPEG 可能改变这部分元数据，不承诺全部原始元数据不变。
-- 视频使用压缩采样直通，只改为 MOV 封装、写入配对标识与 still-image-time 时间轨道，保留可用音轨和视频方向。
-- 通过苹果 PHLivePhoto 文件识别检查后，才尝试把图片和 pairedVideo 作为同一个相册资产保存。识别或保存失败会显示实际错误，不会统一猜成权限问题。
-- 分别统计成功和失败项目，重复运行会重复保存。
+直接读取仅使用平台返回的资源，不使用公共解析服务器。可选登录状态留在本机 WebKit 数据区，不上传账号或 Cookie。只有匹配平台域名与路径的请求会附带本机 Cookie，跨主机重定向会剥离 Cookie。
 
-## 首版边界
+平台未提供的原件清晰度无法恢复，已嵌入文件的水印不会被自动擦除。首版不支持直播、Story、主页批量下载、微博 TV 独立链接，也不绕过无权限内容的访问限制。资源地址可能过期，重新读取帖子后再试。
 
-- 没有现成配对标识的 HEIC、PNG 等格式暂不转换，避免偷偷重编码。已有标识且系统可识别的格式会原样复制。
-- 没有现成配对标识的 MPO/HDR JPEG 暂不补写，以免破坏多图索引和 HDR 增益图；已有有效实况标识的这类图片仍整文件原样保留。
-- 只处理 60 秒内的实况动态片段；普通视频下载不受此时长条件影响。单文件下载上限 512 MB，是内存与处理时长保护，不是每日额度。
-- 不恢复平台没有提供的原始动态画质或音轨，不擦除已经嵌入像素的水印。网页流与作者上传原件可能不同；结果里会指出网页动态来源。
-- 平台要求登录或验证时可能解析失败；首版不保存或要求提交小红书账号 Cookie。
-- 不收集数据。网络仅请求小红书及其媒体 CDN，不使用公共中转服务器。
+## 原图 Live Photo
 
-## Windows 用户如何得到安装包
+- 封面来自高清图片资源，不从视频截帧。
+- 已有有效 Apple MakerNote 17 标识的原图：整文件复制并逐字节校验，视频沿用同一标识。
+- 无标识的普通 JPEG：仅补写配对元数据，保留压缩图像数据、尺寸和方向。不会假装保留所有被替换的 MakerNote 元数据。
+- 无标识的 HEIC／PNG／MPO／HDR JPEG 暂不转换，避免重编码或破坏多图索引；已有标识且系统可识别的文件原样保留。
+- 动态片段使用压缩采样直通，仅重新封装 MOV、添加标识和 still-image-time 轨道，保留可用音轨及方向。
+- 先通过苹果 PHLivePhoto 识别检查，再保存为同一个照片资产。失败时显示真实错误及已保存数量。
+- 实况片段上限 60 秒，单文件上限 512 MB。没有会员、广告或每日张数额度。
 
-因为这台 Windows 没有苹果 SDK，使用 GitHub 的标准 macOS 编译机。已获授权创建公开仓库并启动免费编译：[xhs-original-live](https://github.com/dlwlrmazxr-hue/xhs-original-live)。源码不包含用户的笔记、照片、Cookie 或账号信息。
+## Windows 编译与安装
 
-1. 在自己的 GitHub 账号创建一个仓库。标准 macOS 编译机对公开仓库免费；私有仓库会使用账号的免费分钟额度，超出可能收费。本项目源码不包含你发来的笔记、照片或账号数据。
-2. 将本目录下的文件放到仓库根目录，务必包含 `.github/workflows/build.yml`，不要再多套一层目录。网页上传可能跳过点号目录；推荐 Windows 的 GitHub Desktop 提交整个解压目录。
-3. 在仓库的 **Actions → Build and test iPhone app → Run workflow** 启动编译。
-4. 流程先编译并运行原生测试；测试不通过不会生成安装包。失败时下载 `native-test-results` 或提供失败日志，继续修复。
-5. 全部通过后下载 `XHSOriginalLive-unsigned-IPA`，解压得到未签名的 `.ipa`。
+公开仓库：https://github.com/dlwlrmazxr-hue/xhs-original-live
 
-## Windows 安装到自己的 iPhone
+GitHub Actions 使用标准 macOS 编译机，公开仓库的标准编译免费。流程先运行全部原生测试，通过后生成未签名 IPA；安装包保留在 Actions 的 `XHSOriginalLive-unsigned-IPA` 中 7 天。
 
-1. 从 https://sideloadly.io/ 获取官方 Windows 安装工具。官网当前说明支持 iOS 27 系列及免费 Apple 账号；本 App 在 iOS 27.2 的实际安装兼容性仍需你这台手机验证。Windows 版要求网页版 iTunes 与 iCloud，请按工具官网提示准备。
-2. 连接并信任 iPhone，使用你自己的 Apple 账号给生成的 IPA 签名安装。账号和验证码只在你自己的安装工具里操作，不需要发给聊天。
-3. 按手机提示信任个人开发者；若系统要求开发者模式，按系统指引启用。
-4. 免费个人签名通常 7 天失效，需要续签。这是苹果的安装规则，与本 App 的合成张数无关。
+本地完整源码目录使用 `App/`、`Tests/`；公开仓库采用平铺 Swift 文件与对应 project.yml，两者均用 XcodeGen 生成同名项目。
 
-没有购买付费证书、开发者会员或第三方工具的必要。安装服务本身的账号验证和兼容性无法在当前电脑替你确认。
+在 Windows 从 [Sideloadly 官网](https://sideloadly.io/) 安装签名工具及其官方要求的 iTunes／iCloud 组件。用数据线连接并信任手机，拖入 IPA，使用自己的免费 Apple 账号安装。密码与验证码在自己的电脑／手机中完成，不需要提供给聊天。需要时按系统提示信任开发者、开启开发者模式。
 
-## 手机首次验证
+使用与原版相同的 Apple 账号、目标手机和签名选项覆盖安装；不要先删除旧版。免费个人签名通常 7 天需要续签，与 App 的合成张数无关。
 
-1. 打开 App，粘贴分享文案，选择「原图实况照片」，点「开始保存」。首次只允许添加照片即可，不要求读取整个图库。
-2. 在「照片」里查看结果并长按，确认能播放。
-3. 查看相片的信息和方向，确认封面尺寸与源图片一致。
-4. 接着测试多张笔记、纯图片、普通视频，以及无音轨的 Live 图。没有音轨的源文件合成后也不会凭空有声音。
+## 快捷指令
 
-## 接入快捷指令
+安装后新建快捷指令：添加「获取剪贴板」，再添加本 App 的「下载图片、视频或实况」，分享文案绑定剪贴板，下载类型设为「每次询问」。复制链接后运行，App 会处理保存；需要平台登录时，在 App 的官方网页入口完成。操作标识保留兼容，旧版小红书操作的显示名称在新版中更新。
 
-安装成功后，本 App 提供「下载小红书原图、视频或实况」操作。
+## 参考与许可
 
-新建一个快捷指令，添加「获取剪贴板」，再添加本 App 的下载操作，把分享文案参数设为剪贴板，把「下载类型」设为「每次询问」。以后就是：复制分享链接 → 运行快捷指令 → 选择类型 → 打开本 App 处理并保存。
+- [Apple PHAssetCreationRequest](https://developer.apple.com/documentation/photos/phassetcreationrequest)
+- [Apple WKHTTPCookieStore](https://developer.apple.com/documentation/webkit/wkhttpcookiestore)
+- [Apple 个人开发账号](https://developer.apple.com/help/account/basics/about-your-developer-account/)
+- [GitHub 编译机](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
+- [yt-dlp 的平台结构参考](https://github.com/yt-dlp/yt-dlp/tree/master/yt_dlp/extractor)：本项目独立实现 Swift 解析器，不运行或打包 yt-dlp。
 
-也可以直接运行 App 提供的「保存小红书媒体」App 快捷指令；分享文案为空时会读取剪贴板。最终的参数询问行为需要真机确认。
-
-## 检查状态
-
-`local-checks.json` 记录本地检查、成功原生运行链接和安装包校验值。苹果编译通过证明以对应 GitHub Actions 日志为准。
-
-原生测试覆盖以下项目，最终结果以 GitHub Actions 中对应提交的测试报告为准：
-
-- JPEG 补写标识后，压缩图像数据、尺寸、方向不变。
-- 已有配对标识时，完整图片文件逐字节不变。
-- 损坏图片会失败，不产生假成功。
-- 分享链接域名、笔记 ID 一致性、undefined 在字符串内外的解析。
-- 生成测试视频、配对后视频压缩采样逐字节不变。
-- 苹果 PHLivePhoto 能否识别生成的图片与 MOV 组合。
-
-## 参考
-
-- Apple PHAssetCreationRequest：https://developer.apple.com/documentation/photos/phassetcreationrequest
-- Apple 个人开发账号与 7 天签名规则：https://developer.apple.com/help/account/basics/about-your-developer-account/
-- GitHub 标准编译机免费条件：https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job
-- Sideloadly：https://sideloadly.io/
-
-## 许可
-
-本目录中的自编源码按 MIT 许可证提供，见 LICENSE。使用自己的内容或获得许可的内容进行保存和测试。
+自编源码和原创图标按 MIT 许可提供，见 LICENSE。
