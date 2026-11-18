@@ -43,13 +43,21 @@
   ],
   "project_and_workflow": "parsed_and_structurally_checked",
   "synthetic_note_fixture": "valid_JSON",
-  "native_sdk_build": "Xcode_16.4_simulator_app_and_tests_compiled",
-  "native_tests": "4_passed_1_failed_in_run_44273400389; corrected_run_44303974285_queued",
+  "native_sdk_build": "Xcode_16.4_iOS_18.5_simulator_and_arm64_iphoneos_passed",
+  "native_tests": {
+    "passed": 5,
+    "failed": 0,
+    "run_id": 44303974285,
+    "attempt": 2,
+    "commit": "02f8c3e15eef3daf971fd6e94cf2aa2df28dd5c1",
+    "fixture": "synthetic_JPEG_and_H264; no_real_photo_library_write"
+  },
   "iphone_27_2_test": "not_run",
   "image_metadata_review": "untagged_MPF_HDR_rejected_without_rewriting",
-  "physical_device_build": "pending_native_test_success",
+  "physical_device_build": "passed_unsigned_IPA",
   "retry_runs": [
     44303974285,
     44305484107
-  ]
+  ],
+  "ipa_sha256": "d63e730cffbcb0adbb80306d4fdbaef50b7df4b510c0fe40da330ef706e061de"
 }
