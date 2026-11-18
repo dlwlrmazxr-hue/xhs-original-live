@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 
     func run(text: String, kind: DownloadKind) async throws -> String {
         guard !busy else { throw LiveError.message("已有任务正在运行，请等它完成。") }
+        self.text = text; self.kind = kind
         busy = true; result = ""; error = nil; status = "正在读取笔记…"
         defer { busy = false }
         do {
