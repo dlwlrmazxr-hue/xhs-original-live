@@ -249,6 +249,14 @@ enum SocialResolver {
                 let video = image["video"] as? [String: Any] ?? [:]
                 let motion = address(video["play_addr"] ?? video["playAddr"])
                 append(image: picture, video: motion, live: motion != nil)
+                if let picture, motion != nil {
+                    let source = (image["display_image"] ?? image["displayImage"]) as? [String: Any] ?? image
+                    let urls = (source["url_list"] ?? source["urlList"]) as? [String] ?? []
+                    let jpegAlternates = urls.compactMap { url($0) }.filter {
+                        $0 != picture && ["jpg", "jpeg"].contains($0.pathExtension.lowercased())
+                    }
+                    items[items.count - 1].alternateImages = Array(jpegAlternates.prefix(3))
+                }
             }
             if images.isEmpty, let video = post["video"] as? [String: Any] {
                 let variants = video["bit_rate"] as? [[String: Any]] ?? []

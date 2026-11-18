@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
     @Published var status = "支持小红书、抖音、微博和 Instagram。"
     @Published var result = ""
     @Published var error: String?
+    @Published var instagramFallback: URL?
 
     func run(text: String, kind: DownloadKind) async throws -> String {
         guard !busy else { throw LiveError.message("已有任务正在运行，请等它完成。") }
@@ -16,7 +17,15 @@ import UniformTypeIdentifiers
         busy = true; result = ""; error = nil; status = "正在读取笔记…"
         defer { busy = false }
         do {
-            let note = try await NoteResolver.resolve(text)
+            let note: Note
+            do { note = try await NoteResolver.resolve(text) }
+            catch {
+                try Task.checkCancellation()
+                if kind != .live, let url = try? NetworkPolicy.shareLink(in: text), MediaPlatform.identify(url) == .instagram {
+                    instagramFallback = url
+                }
+                throw error
+            }
             status = note.title
             let report = try await DownloadService.save(note: note, kind: kind) { message in
                 await MainActor.run { self.status = message }
@@ -119,6 +128,13 @@ struct ContentView: View {
             }
             .navigationTitle("原图实况 · 多平台版")
             .disabled(model.busy)
+            .onChange(of: model.instagramFallback) { _, url in
+                guard let url else { return }
+                browserURL = url
+                browserKind = model.kind
+                showBrowser = true
+                model.instagramFallback = nil
+            }
             .sheet(isPresented: $showBrowser) {
                 if let url = browserURL { PlatformBrowserSheet(url: url) { note in try await model.saveResolved(note, kind: browserKind) } }
             }
@@ -176,6 +192,29 @@ import WebKit
         })();
         """#
         config.userContentController.addUserScript(WKUserScript(source: capture, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        if MediaPlatform.identify(url) == .instagram {
+            let dismissPromotion = #"""
+            (() => {
+              if (!/^\/(?:p|reels?|tv)\//.test(location.pathname)) return;
+              const dismiss = () => {
+                for (const dialog of document.querySelectorAll('[role="dialog"],[aria-modal="true"]')) {
+                  const title = dialog.innerText || '';
+                  if (!/在应用中查看这篇帖子|See this post in the app|View this post in the app/i.test(title)) continue;
+                  const labels = dialog.querySelectorAll('[aria-label="Close"],[aria-label="关闭"]');
+                  for (const label of labels) {
+                    const button = label.closest('button,[role="button"]');
+                    if (button) { button.click(); observer.disconnect(); return; }
+                  }
+                }
+              };
+              const observer = new MutationObserver(dismiss);
+              observer.observe(document.documentElement, {childList:true,subtree:true});
+              setTimeout(() => observer.disconnect(), 15000);
+              dismiss();
+            })();
+            """#
+            config.userContentController.addUserScript(WKUserScript(source: dismissPromotion, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        }
         web = WKWebView(frame: .zero, configuration: config)
         super.init()
         web.navigationDelegate = self

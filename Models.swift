@@ -12,7 +12,7 @@ enum DownloadKind: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .image: return "图片（含实况封面）"
+        case .image: return "图片"
         case .video: return "视频（含实况片段）"
         case .live: return "原图实况照片"
         }
@@ -25,6 +25,7 @@ struct MediaItem: Identifiable {
     let video: URL?
     let isLive: Bool
     let webVideo: Bool
+    var alternateImages: [URL] = []
 }
 
 struct Note {

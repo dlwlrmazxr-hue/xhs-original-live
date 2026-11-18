@@ -9,6 +9,10 @@ enum DownloadService {
 
     static func combine(image: URL, video: URL, in directory: URL) async throws -> String {
         let photo = try OriginalImage.prepare(source: image, output: directory.appendingPathComponent("paired-photo.jpg"))
+        return try await savePair(photo, video: video, in: directory)
+    }
+
+    private static func savePair(_ photo: PreparedImage, video: URL, in directory: URL) async throws -> String {
         let movie = directory.appendingPathComponent("paired-video.mov")
         try await MoviePairer.pair(source: video, output: movie, identifier: photo.identifier)
         try await PhotoStore.save(image: photo.url, video: movie, live: true)
@@ -18,7 +22,7 @@ enum DownloadService {
     static func save(note: Note, kind: DownloadKind, progress: (@Sendable (String) async -> Void)? = nil) async throws -> SaveReport {
         let items = note.items.filter {
             switch kind {
-            case .image: return $0.image != nil
+            case .image: return $0.image != nil && !$0.isLive
             case .video: return $0.video != nil
             case .live: return $0.isLive
             }
@@ -49,10 +53,21 @@ enum DownloadService {
                     try await PhotoStore.save(video: path)
                 case .live:
                     guard let image = item.image, let video = item.video else { throw LiveError.message("实况图片和动态片段不齐全。") }
-                    let still = dir.appendingPathComponent("original.data"), motion = dir.appendingPathComponent("original.mp4")
-                    try await Network.download(image, to: still, sourcePage: note.sourceURL, userAgent: note.userAgent)
+                    let motion = dir.appendingPathComponent("original.mp4")
+                    var prepared: PreparedImage?
+                    var lastError: Error = LiveError.message("未取得可配对的原图。")
+                    for (index, candidate) in ([image] + item.alternateImages).enumerated() {
+                        try Task.checkCancellation()
+                        do {
+                            let still = dir.appendingPathComponent("original-\(index).data")
+                            try await Network.download(candidate, to: still, sourcePage: note.sourceURL, userAgent: note.userAgent)
+                            prepared = try OriginalImage.prepare(source: still, output: dir.appendingPathComponent("paired-\(index).jpg"))
+                            break
+                        } catch { lastError = error }
+                    }
+                    guard let prepared else { throw lastError }
                     try await Network.download(video, to: motion, sourcePage: note.sourceURL, userAgent: note.userAgent)
-                    let detail = try await combine(image: still, video: motion, in: dir)
+                    let detail = try await savePair(prepared, video: motion, in: dir)
                     report.details.append("第 \(item.id) 项：" + detail)
                 }
                 report.saved += 1
