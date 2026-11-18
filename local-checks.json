@@ -45,20 +45,20 @@
   "synthetic_note_fixture": "valid_JSON",
   "native_sdk_build": "Xcode_16.4_iOS_18.5_simulator_and_arm64_iphoneos_passed",
   "native_tests": {
-    "passed": 10,
+    "passed": 15,
     "failed": 0,
-    "run_id": 44318518932,
-    "commit": "a13fe412ca078630afb55482acc122aaa247ead5",
-    "fixture": "synthetic; no real photo library writes"
+    "run_id": 44331056206,
+    "commit": "2332b22b0b07f33d1469b9f4eef83f5f48a62d89",
+    "includes": "real ephemeral simulator Photos JPEG/WebP imports; Weibo live matching"
   },
-  "iphone_27_2_test": "v0.1_user_confirmed_working; v0.2_multiplatform_not_yet_tested",
+  "iphone_27_2_test": "v0.2 user reported three platform failures; v0.2.1 phone retest pending",
   "image_metadata_review": "untagged_MPF_HDR_rejected_without_rewriting",
-  "physical_device_build": "passed_unsigned_IPA_0.2.0_build_3",
+  "physical_device_build": "passed_unsigned_IPA_0.2.1_build_4",
   "retry_runs": [
     44303974285,
     44305484107
   ],
-  "ipa_sha256": "19e08f184ee99ed5cf3f37cf0c38b62acd8a09e1e5ccb39d45b11d6c616fbf18",
+  "ipa_sha256": "868fdf54e414196fb25c0b4be1a9e8e5c056314f7e659a6c59b1ea7edbce5ccb",
   "real_post_probes": "Douyin and Instagram initial HTML lacks media; Weibo requires visitor validation. On-device login/download pending.",
   "app_icon": "13 opaque PNG sizes; packaged Assets.car and CFBundleIcons verified"
 }
